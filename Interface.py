@@ -146,80 +146,101 @@ STRINGS = {
     "shortcut_keyboard": "⌨️ კლავიატურა  (Ctrl+K)",
 }
 
-# === Visual theme ===============================================
-PALETTE = {
-    "bg": "#f5f6fa",
-    "panel": "#ffffff",
-    "border": "#e2e5ec",
-    "text": "#1f2430",
-    "muted": "#6b7280",
-    "primary": "#3654ff",
-    "primary_hover": "#2c46e0",
+# === Visual theme (dark, only) ===================================
+DARK_PALETTE = {
+    "bg": "#15171f",
+    "panel": "#1e2130",
+    "border": "#2f3346",
+    "text": "#e7e9f2",
+    "muted": "#9096ab",
+    "primary": "#5b7bff",
+    "primary_hover": "#7089ff",
     "primary_text": "#ffffff",
-    "accent": "#16a34a",
-    "danger": "#dc2626",
-    "input_bg": "#fbfbfd",
+    "accent": "#34d399",
+    "danger": "#f87171",
+    "input_bg": "#171923",
+    "hover_bg": "#262a3d",
+    "pressed_bg": "#2e3350",
+    "indicator_off": "#3a3f55",
+    "shadow_alpha": 90,
 }
 
-STYLESHEET = f"""
+
+def build_stylesheet(p):
+    """Build the app QSS from a palette dict (LIGHT_PALETTE or DARK_PALETTE)."""
+    return f"""
 QMainWindow {{
-    background: {PALETTE['bg']};
+    background: {p['bg']};
 }}
 QWidget {{
-    color: {PALETTE['text']};
+    color: {p['text']};
     font-family: "Segoe UI", "Noto Sans Georgian", sans-serif;
 }}
 QFrame#card {{
-    background: {PALETTE['panel']};
-    border: 1px solid {PALETTE['border']};
+    background: {p['panel']};
+    border: 1px solid {p['border']};
     border-radius: 12px;
 }}
 QLabel#titleLabel {{
-    color: {PALETTE['text']};
+    color: {p['text']};
 }}
 QLabel#sectionLabel {{
-    color: {PALETTE['muted']};
+    color: {p['muted']};
     letter-spacing: 0.5px;
 }}
 QPlainTextEdit {{
-    background: {PALETTE['input_bg']};
-    border: 1px solid {PALETTE['border']};
+    background: {p['input_bg']};
+    color: {p['text']};
+    border: 1px solid {p['border']};
     border-radius: 8px;
     padding: 10px;
-    selection-background-color: {PALETTE['primary']};
+    selection-background-color: {p['primary']};
 }}
 QPlainTextEdit:focus {{
-    border: 1px solid {PALETTE['primary']};
+    border: 1px solid {p['primary']};
 }}
 QPushButton {{
-    background: {PALETTE['panel']};
-    border: 1px solid {PALETTE['border']};
+    background: {p['panel']};
+    color: {p['text']};
+    border: 1px solid {p['border']};
     border-radius: 8px;
     padding: 8px 14px;
     text-align: left;
 }}
 QPushButton:hover {{
-    background: #f0f2ff;
-    border: 1px solid {PALETTE['primary']};
+    background: {p['hover_bg']};
+    border: 1px solid {p['primary']};
 }}
 QPushButton:pressed {{
-    background: #e4e8ff;
+    background: {p['pressed_bg']};
 }}
 QPushButton#primaryButton {{
-    background: {PALETTE['primary']};
-    color: {PALETTE['primary_text']};
+    background: {p['primary']};
+    color: {p['primary_text']};
     border: none;
     font-weight: 600;
     padding: 10px 16px;
+    text-align: center;
 }}
 QPushButton#primaryButton:hover {{
-    background: {PALETTE['primary_hover']};
+    background: {p['primary_hover']};
+}}
+QPushButton#themeToggle {{
+    text-align: center;
+    padding: 6px 10px;
 }}
 QComboBox {{
-    background: {PALETTE['input_bg']};
-    border: 1px solid {PALETTE['border']};
+    background: {p['input_bg']};
+    color: {p['text']};
+    border: 1px solid {p['border']};
     border-radius: 6px;
     padding: 4px 8px;
+}}
+QComboBox QAbstractItemView {{
+    background: {p['panel']};
+    color: {p['text']};
+    selection-background-color: {p['primary']};
+    selection-color: {p['primary_text']};
 }}
 QCheckBox {{
     spacing: 8px;
@@ -228,37 +249,47 @@ QCheckBox::indicator {{
     width: 34px;
     height: 18px;
     border-radius: 9px;
-    background: #d1d5db;
+    background: {p['indicator_off']};
 }}
 QCheckBox::indicator:checked {{
-    background: {PALETTE['primary']};
+    background: {p['primary']};
 }}
 QLabel#statusLabel {{
-    background: {PALETTE['panel']};
-    border: 1px solid {PALETTE['border']};
+    background: {p['panel']};
+    color: {p['text']};
+    border: 1px solid {p['border']};
     border-radius: 8px;
     padding: 0 12px;
 }}
 QLabel#statusLabel[state="error"] {{
-    color: {PALETTE['danger']};
-    border-color: {PALETTE['danger']};
+    color: {p['danger']};
+    border-color: {p['danger']};
 }}
 QLabel#statusLabel[state="ok"] {{
-    color: {PALETTE['accent']};
-    border-color: {PALETTE['accent']};
+    color: {p['accent']};
+    border-color: {p['accent']};
 }}
 QDialog {{
-    background: {PALETTE['panel']};
+    background: {p['panel']};
+    color: {p['text']};
+}}
+QMessageBox {{
+    background: {p['panel']};
 }}
 """
 
 
-def add_shadow(widget):
+# Kept for any external code that imports PALETTE / STYLESHEET directly.
+PALETTE = DARK_PALETTE
+STYLESHEET = build_stylesheet(DARK_PALETTE)
+
+
+def add_shadow(widget, alpha=30):
     shadow = QGraphicsDropShadowEffect(widget)
     shadow.setBlurRadius(24)
     shadow.setXOffset(0)
     shadow.setYOffset(4)
-    shadow.setColor(QColor(0, 0, 0, 30))
+    shadow.setColor(QColor(0, 0, 0, alpha))
     widget.setGraphicsEffect(shadow)
 
 
@@ -469,6 +500,7 @@ class ModernGeorgianTTS(QMainWindow):
         self.audio_file = os.path.join(os.getcwd(), f"georgian_tts_{uuid.uuid4().hex}.wav")
         self.audio_worker = None
         self.gen_worker = None
+        self._card_frames = []
 
         self.init_ui()
 
@@ -521,7 +553,8 @@ class ModernGeorgianTTS(QMainWindow):
     def create_text_input_panel(self):
         frame = QFrame()
         frame.setObjectName("card")
-        add_shadow(frame)
+        add_shadow(frame, alpha=DARK_PALETTE['shadow_alpha'])
+        self._card_frames.append(frame)
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
@@ -578,7 +611,8 @@ class ModernGeorgianTTS(QMainWindow):
     def create_control_panel(self):
         frame = QFrame()
         frame.setObjectName("card")
-        add_shadow(frame)
+        add_shadow(frame, alpha=DARK_PALETTE['shadow_alpha'])
+        self._card_frames.append(frame)
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(6)
