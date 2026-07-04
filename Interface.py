@@ -1,29 +1,34 @@
 import os
 import sys
-
-custom_temp = os.path.join(os.getcwd(), "my_temp")
-os.makedirs(custom_temp, exist_ok=True)
-os.environ["TEMP"] = custom_temp
-os.environ["TMP"] = custom_temp
-
 import shutil
 import uuid
 import time
+import logging
 from pathlib import Path
 import subprocess
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QLabel, QPushButton, QPlainTextEdit,
     QCheckBox, QComboBox, QGridLayout, QHBoxLayout, QVBoxLayout, QFrame,
-    QFileDialog, QMessageBox, QDialog, QSplitter, QGraphicsDropShadowEffect,
-    QSizePolicy
+    QFileDialog, QMessageBox, QDialog, QSplitter, QGraphicsDropShadowEffect
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QFont, QColor, QTextCursor, QTextCharFormat
 
 from Functions import preprocess_and_syllabify, synthesize_speech
 from db import populate_syllable_db, get_syllable_audio_path
-from utils import resource_path
+
+logger = logging.getLogger("georgian_tts")
+
+
+def setup_temp_dir() -> str:
+    """Create and register the app's own temp directory. Called once from main(),
+    not at import time, so importing this module has no filesystem/env side effects."""
+    custom_temp = os.path.join(os.getcwd(), "my_temp")
+    os.makedirs(custom_temp, exist_ok=True)
+    os.environ["TEMP"] = custom_temp
+    os.environ["TMP"] = custom_temp
+    return custom_temp
 
 
 def safe_import(module_name, package_name=None):
@@ -65,7 +70,7 @@ SAMPLE_TEXT = """
 ქართული ენა უნიკალურია.
 """
 
-Georgian_Alphabet = ["აბგდევზთიკლმნოპჟრსტუფქღყშჩცძწჭხჯჰ"]
+GEORGIAN_ALPHABET = frozenset("აბგდევზთიკლმნოპჟრსტუფქღყშჩცძწჭხჯჰ")
 
 GEORGIAN_KEYBOARD_MAP = {
     'q': 'ქ', 'w': 'წ', 'e': 'ე', 'r': 'რ', 't': 'ტ', 'y': 'ყ',
@@ -144,6 +149,18 @@ STRINGS = {
     "all_files": "ყველა ფაილი (*)",
     "virtual_keyboard": "ქართული კლავიატურა",
     "shortcut_keyboard": "⌨️ კლავიატურა  (Ctrl+K)",
+    "warning": "გაფრთხილება",
+    "context_disable_georgian": "ქართულის გამორთვა",
+    "context_enable_georgian": "ქართულის ჩართვა",
+    "could_not_load_file": "ფაილის ჩატვირთვა ვერ მოხერხდა:\n{err}",
+    "install_required_package": "დააინსტალირეთ საჭირო პაკეტი.",
+    "file_read_error_txt": "ტექსტური ფაილის წაკითხვა ვერ მოხერხდა: {err}",
+    "file_read_error_pdf": "PDF ფაილის წაკითხვა ვერ მოხერხდა: {err}",
+    "file_read_error_docx": "DOCX ფაილის წაკითხვა ვერ მოხერხდა: {err}",
+    "pdf_required": "PDF ფაილების გასახსნელად საჭიროა PyPDF2 პაკეტი.",
+    "docx_required": "DOCX ფაილების გასახსნელად საჭიროა python-docx პაკეტი.",
+    "unsupported_format": "მხარდაუჭერელი ფაილის ფორმატი: {ext}",
+    "playback_error": "დაკვრის შეცდომა ფაილისთვის {file}",
 }
 
 # === Visual theme (dark, only) ===================================
@@ -326,8 +343,8 @@ class GenerationWorker(QThread):
             audio.export(self.audio_out_path, format=AUDIO_FORMAT)
             self.finished_ok.emit(self.audio_out_path)
         except Exception as e:
-            import traceback
-            self.failed.emit(f"{e}\n{traceback.format_exc()}")
+            logger.exception("Audio generation failed")
+            self.failed.emit(str(e))
 
 
 class AudioWorker(QThread):
@@ -345,20 +362,24 @@ class AudioWorker(QThread):
             if self.operation == 'play' and self.audio_file:
                 self._play_audio()
             self.finished.emit(True, "Operation completed successfully")
-        except Exception as e:
-            import traceback
-            self.finished.emit(False, f"{e}\n{traceback.format_exc()}")
+        except Exception:
+            logger.exception("Audio worker failed")
+            self.finished.emit(False, STRINGS["playback_error"].format(file=self.audio_file))
 
     def _play_audio(self):
         self.progress.emit(STRINGS["status_playing"])
         try:
             if sys.platform == "win32":
-                subprocess.run(f'start "" "{self.audio_file}"', shell=True)
+                # No subprocess/shell needed on Windows: this launches the
+                # file directly with its registered default player.
+                os.startfile(self.audio_file)
+            elif sys.platform == "darwin":
+                subprocess.run(["afplay", self.audio_file], check=True)
             else:
-                subprocess.run(f'aplay "{self.audio_file}"', shell=True)
-        except Exception as e:
-            import traceback
-            self.finished.emit(False, f"Audio playback error for file {self.audio_file}: {e}\n{traceback.format_exc()}")
+                subprocess.run(["aplay", self.audio_file], check=True)
+        except Exception:
+            logger.exception("Audio playback failed for %s", self.audio_file)
+            self.finished.emit(False, STRINGS["playback_error"].format(file=self.audio_file))
 
 
 class GeorgianTextEdit(QPlainTextEdit):
@@ -385,10 +406,9 @@ class GeorgianTextEdit(QPlainTextEdit):
     def keyPressEvent(self, event):
         if self.georgian_mode and event.text():
             key = event.text().lower()
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                if key in GEORGIAN_KEYBOARD_MAP_SHIFT:
-                    self.textCursor().insertText(GEORGIAN_KEYBOARD_MAP_SHIFT[key])
-                    return
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier and key in GEORGIAN_KEYBOARD_MAP_SHIFT:
+                self.textCursor().insertText(GEORGIAN_KEYBOARD_MAP_SHIFT[key])
+                return
             elif key in self.georgian_map:
                 self.textCursor().insertText(self.georgian_map[key])
                 return
@@ -397,7 +417,7 @@ class GeorgianTextEdit(QPlainTextEdit):
     def show_context_menu(self, pos):
         menu = self.createStandardContextMenu()
         menu.addSeparator()
-        toggle_text = "Disable Georgian" if self.georgian_mode else "Enable Georgian"
+        toggle_text = STRINGS["context_disable_georgian"] if self.georgian_mode else STRINGS["context_enable_georgian"]
         toggle_action = QAction(toggle_text, self)
         toggle_action.triggered.connect(self.toggle_georgian)
         menu.addAction(toggle_action)
@@ -491,13 +511,13 @@ class GeorgianKeyboardDialog(QDialog):
 class ModernGeorgianTTS(QMainWindow):
     """Main application window for Georgian TTS"""
 
-    def __init__(self):
+    def __init__(self, temp_dir: str):
         super().__init__()
         self.setWindowTitle("Georgian TTS · ქართული TTS")
         self.resize(1080, 720)
         self.setMinimumSize(860, 600)
 
-        self.audio_file = os.path.join(os.getcwd(), f"georgian_tts_{uuid.uuid4().hex}.wav")
+        self.audio_file = os.path.join(temp_dir, f"georgian_tts_{uuid.uuid4().hex}.wav")
         self.audio_worker = None
         self.gen_worker = None
         self._card_frames = []
@@ -714,12 +734,14 @@ class ModernGeorgianTTS(QMainWindow):
             content = self.read_file_content(file_path)
             self.text_edit.setPlainText(content)
             self.set_status(STRINGS["status_loaded"].format(file=os.path.basename(file_path)), "ok")
-        except ValueError as ve:
-            QMessageBox.critical(self, STRINGS["error"], f"ფაილის ჩატვირთვა ვერ მოხერხდა:\n{ve}")
         except ImportError as ie:
-            QMessageBox.critical(self, STRINGS["missing_dependency"], f"{ie}\nდააინსტალირეთ საჭირო პაკეტი.")
+            QMessageBox.critical(
+                self, STRINGS["missing_dependency"],
+                f"{ie}\n{STRINGS['install_required_package']}"
+            )
         except Exception as e:
-            QMessageBox.critical(self, STRINGS["error"], f"ფაილის ჩატვირთვა ვერ მოხერხდა:\n{e}")
+            logger.exception("Failed to load file: %s", file_path)
+            QMessageBox.critical(self, STRINGS["error"], STRINGS["could_not_load_file"].format(err=e))
 
     def read_file_content(self, file_path):
         file_ext = Path(file_path).suffix.lower()
@@ -729,28 +751,28 @@ class ModernGeorgianTTS(QMainWindow):
                 with open(file_path, 'r', encoding='utf-8') as f:
                     return f.read()
             except Exception as e:
-                raise ValueError(f"Could not read text file: {e}")
+                raise ValueError(STRINGS["file_read_error_txt"].format(err=e))
 
         elif file_ext == '.pdf':
             if not HAS_PDF or PyPDF2 is None:
-                raise ImportError("PyPDF2 is required to open PDF files.")
+                raise ImportError(STRINGS["pdf_required"])
             try:
                 reader = PyPDF2.PdfReader(file_path)
                 return "\n".join(page.extract_text() or "" for page in reader.pages)
             except Exception as e:
-                raise ValueError(f"Could not read PDF file: {e}")
+                raise ValueError(STRINGS["file_read_error_pdf"].format(err=e))
 
         elif file_ext == '.docx':
             if not HAS_DOCX or docx is None:
-                raise ImportError("python-docx is required to open DOCX files.")
+                raise ImportError(STRINGS["docx_required"])
             try:
                 doc = docx.Document(file_path)
                 return "\n".join(para.text for para in doc.paragraphs)
             except Exception as e:
-                raise ValueError(f"Could not read DOCX file: {e}")
+                raise ValueError(STRINGS["file_read_error_docx"].format(err=e))
 
         else:
-            raise ValueError(f"Unsupported file format: {file_ext}")
+            raise ValueError(STRINGS["unsupported_format"].format(ext=file_ext))
 
     def clear_text(self):
         reply = QMessageBox.question(
@@ -773,11 +795,11 @@ class ModernGeorgianTTS(QMainWindow):
         """Validate input, then hand generation off to a background thread."""
         text = self.text_edit.toPlainText().strip()
         if not text:
-            QMessageBox.warning(self, STRINGS["warning_no_text"], STRINGS["warning_no_text"])
+            QMessageBox.warning(self, STRINGS["warning"], STRINGS["warning_no_text"])
             return
 
         for char in text:
-            if char.isalpha() and char not in Georgian_Alphabet[0]:
+            if char.isalpha() and char not in GEORGIAN_ALPHABET:
                 QMessageBox.warning(
                     self, STRINGS["error"],
                     STRINGS["warning_invalid_char"].format(char=char)
@@ -819,7 +841,7 @@ class ModernGeorgianTTS(QMainWindow):
 
     def play_audio(self):
         if not os.path.exists(self.audio_file):
-            QMessageBox.warning(self, STRINGS["warning_generate_audio"], STRINGS["warning_generate_audio"])
+            QMessageBox.warning(self, STRINGS["warning"], STRINGS["warning_generate_audio"])
             return
         if self.audio_worker and self.audio_worker.isRunning():
             QMessageBox.information(self, STRINGS["info"], STRINGS["status_playing"])
@@ -840,7 +862,7 @@ class ModernGeorgianTTS(QMainWindow):
 
     def save_audio(self):
         if not os.path.exists(self.audio_file):
-            QMessageBox.warning(self, STRINGS["warning_generate_audio"], STRINGS["warning_generate_audio"])
+            QMessageBox.warning(self, STRINGS["warning"], STRINGS["warning_generate_audio"])
             return
 
         file_path, _ = QFileDialog.getSaveFileName(
@@ -862,9 +884,11 @@ class ModernGeorgianTTS(QMainWindow):
     def copy_file_safely(self, source, destination):
         max_retries = 3
         retry_delay = 0.1
+        dest_dir = os.path.dirname(destination)
         for attempt in range(max_retries):
             try:
-                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                if dest_dir:
+                    os.makedirs(dest_dir, exist_ok=True)
                 shutil.copy2(source, destination)
                 return
             except (PermissionError, OSError) as e:
@@ -877,8 +901,11 @@ class ModernGeorgianTTS(QMainWindow):
     def closeEvent(self, event):
         for worker in (self.audio_worker, self.gen_worker):
             if worker and worker.isRunning():
-                worker.terminate()
-                worker.wait()
+                # Give the worker a moment to finish cleanly. terminate() is
+                # avoided here since it can kill mid-write (WAV export) or
+                # mid-subprocess (playback) and leave things in a bad state.
+                if not worker.wait(3000):
+                    logger.warning("%s did not finish within timeout on close", worker)
         if os.path.exists(self.audio_file):
             try:
                 os.remove(self.audio_file)
@@ -888,9 +915,15 @@ class ModernGeorgianTTS(QMainWindow):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    temp_dir = setup_temp_dir()
+
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLESHEET)
-    window = ModernGeorgianTTS()
+    window = ModernGeorgianTTS(temp_dir)
     window.show()
     sys.exit(app.exec())
 
