@@ -13,11 +13,15 @@ def populate_syllable_db(db_path=None, audio_dir=None):
                     syllable TEXT UNIQUE,
                     file_path TEXT)''')
 
-    for file in os.listdir(audio_dir):
+    # Rebuild from the files actually present, so rows for deleted recordings
+    # disappear. Paths are stored relative and with forward slashes, so the
+    # database is portable between machines and operating systems.
+    cur.execute("DELETE FROM syllables")
+    for file in sorted(os.listdir(audio_dir)):
         if file.endswith(".wav"):
-            syl = file.replace(".wav", "")
-            cur.execute("INSERT OR IGNORE INTO syllables (syllable, file_path) VALUES (?, ?)",
-                        (syl, os.path.join(audio_dir, file)))
+            syl = file[:-len(".wav")]
+            cur.execute("INSERT INTO syllables (syllable, file_path) VALUES (?, ?)",
+                        (syl, f"AudioDB/{file}"))
     conn.commit()
     conn.close()
 
