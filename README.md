@@ -10,15 +10,15 @@ A rule-based Georgian text-to-speech system. It splits normalized text into syll
 
 - Text normalization: abbreviations, acronyms, symbols and numbers are expanded to words.
 - Rule-based syllabification (harmonic clusters, ejectives, sonorants).
-- Concatenation of recorded syllables with fixed-length pauses (100 ms between words, 400 ms after `!` or `?`) and 15 ms cross-fades.
-- Desktop GUI (PyQt6): type text, load a `.txt` file, or use the on-screen Georgian keyboard; play the result or save it as `.wav`.
+- Concatenation of recorded syllables with fixed-length pauses (100 ms between words, 200 ms at a comma, 400 ms after `.`, `!` or `?`) and 15 ms cross-fades.
+- Unknown dotted or slashed abbreviations (e.g. `ფ.ს.ქ.`, `ბ/ზ`) are logged to `unknown_abbreviations.txt` as `UNKNOWN` entries for manual expansion.
+- Desktop GUI (PyQt6): type text, load a `.txt`, `.pdf` or `.docx` file, or use the on-screen Georgian keyboard; play the result or save it as `.wav`.
 
 ## Current limitations
 
 - **Inventory:** `AudioDB/` has 121 recorded syllables. The corpus analysis in the paper identifies 241 syllables that cover about 80% of syllable tokens.
 - **Missing syllables:** if a syllable has no recording, generation stops and the GUI lists the missing syllables. There is no diphone fallback yet.
 - **Prosody:** only fixed pauses and cross-fades. No pitch, duration or stress modelling.
-- **Punctuation:** commas and full stops are removed during normalization, so only `!` and `?` produce the longer sentence-end pause.
 - **Normalization:** lookup-based; no context-dependent disambiguation of abbreviations or number case.
 - **Speaker:** one voice.
 
@@ -40,11 +40,11 @@ On Python 3.13, `pydub` also needs: `pip install audioop-lts`.
 python Interface.py
 ```
 
-Enter or load Georgian text, press generate, then play or save the audio. Generation only works if every syllable of the text is in `AudioDB/`.
+Enter Georgian text or load a `.txt`, `.pdf` or `.docx` file (PDF and DOCX import need `PyPDF2` and `python-docx`), press generate, then play or save the audio. Generation only works if every syllable of the text is in `AudioDB/`.
 
 ## How it works
 
-1. **Normalize** the text (`Functions.py`: symbols → abbreviations → acronyms → numbers → cleanup).
+1. **Normalize** the text (`Functions.py`: symbols → abbreviations → acronyms → numbers → removal of unwanted and non-Georgian characters).
 2. **Syllabify** each word with the rule set in `syllabify_georgian()`.
 3. **Look up** `AudioDB/<syllable>.wav` for every syllable.
 4. **Concatenate** with pydub: normalize, 20 Hz high-pass, 5 ms fades, 15 ms cross-fade, fixed pauses, low-level white noise overlay.
@@ -86,15 +86,15 @@ The speaker consented to the recordings being published under this license.
 
 - ტექსტის ნორმალიზაცია: აბრევიატურები, აკრონიმები, სიმბოლოები და რიცხვები იშლება სიტყვებად.
 - მარცვლებად დაყოფა წესებით (ჰარმონიული კლასტერები, ეჯექტივები, სონორები).
-- ჩაწერილი მარცვლების შეერთება ფიქსირებული პაუზებით (100 მწ სიტყვებს შორის, 400 მწ `!` ან `?`-ის შემდეგ) და 15 მწ კროსფეიდით.
-- GUI (PyQt6): ტექსტის შეყვანა, `.txt` ფაილის ატვირთვა ან ეკრანული ქართული კლავიატურა; შედეგის მოსმენა ან `.wav`-ად შენახვა.
+- ჩაწერილი მარცვლების შეერთება ფიქსირებული პაუზებით (100 მწ სიტყვებს შორის, 200 მწ მძიმესთან, 400 მწ `.`, `!` ან `?`-ის შემდეგ) და 15 მწ კროსფეიდით.
+- უცნობი აბრევიატურები (მაგ. `ფ.ს.ქ.`, `ბ/ზ`) იწერება ფაილში `unknown_abbreviations.txt` `UNKNOWN` ნიშნით, ხელით გასაშლელად.
+- GUI (PyQt6): ტექსტის შეყვანა, `.txt`, `.pdf` ან `.docx` ფაილის ატვირთვა ან ეკრანული ქართული კლავიატურა; შედეგის მოსმენა ან `.wav`-ად შენახვა.
 
 ## ამჟამინდელი შეზღუდვები
 
 - **მარცვლების რაოდენობა:** `AudioDB/`-ში 121 ჩაწერილი მარცვალია. ნაშრომის კორპუსის ანალიზით 241 მარცვალი ფარავს მარცვლის გამოყენებათა დაახლოებით 80%-ს.
 - **ნაკლული მარცვლები:** თუ მარცვალი არ არის ჩაწერილი, გენერაცია ჩერდება და GUI აჩვენებს ნაკლულ მარცვლებს. დიფონური ალტერნატივა ჯერ არ არსებობს.
 - **პროსოდია:** მხოლოდ ფიქსირებული პაუზები და კროსფეიდი. ტონის, ხანგრძლივობისა და მახვილის მოდელირება არ არის.
-- **პუნქტუაცია:** მძიმე და წერტილი ნორმალიზაციისას იშლება, ამიტომ წინადადების ბოლოს გრძელ პაუზას მხოლოდ `!` და `?` იძლევა.
 - **ნორმალიზაცია:** სიებზე დაფუძნებულია; აბრევიატურებისა და რიცხვების ბრუნვა კონტექსტის მიხედვით არ განისაზღვრება.
 - **ხმა:** ერთი დიქტორი.
 
@@ -116,11 +116,11 @@ Python 3.13-ზე `pydub`-ს დამატებით სჭირდებ
 python Interface.py
 ```
 
-შეიყვანეთ ან ატვირთეთ ქართული ტექსტი, დააჭირეთ გენერაციას, შემდეგ მოუსმინეთ ან შეინახეთ აუდიო. გენერაცია მუშაობს მხოლოდ მაშინ, თუ ტექსტის ყველა მარცვალი არის `AudioDB/`-ში.
+შეიყვანეთ ქართული ტექსტი ან ატვირთეთ `.txt`, `.pdf` ან `.docx` ფაილი (PDF-სა და DOCX-ს სჭირდება `PyPDF2` და `python-docx`), დააჭირეთ გენერაციას, შემდეგ მოუსმინეთ ან შეინახეთ აუდიო. გენერაცია მუშაობს მხოლოდ მაშინ, თუ ტექსტის ყველა მარცვალი არის `AudioDB/`-ში.
 
 ## როგორ მუშაობს
 
-1. **ნორმალიზაცია** (`Functions.py`): სიმბოლოები → აბრევიატურები → აკრონიმები → რიცხვები → გასუფთავება.
+1. **ნორმალიზაცია** (`Functions.py`): სიმბოლოები → აბრევიატურები → აკრონიმები → რიცხვები → არასასურველი და არაქართული სიმბოლოების წაშლა.
 2. **მარცვლებად დაყოფა** `syllabify_georgian()` ფუნქციის წესებით.
 3. **ძიება:** თითოეული მარცვლისთვის იძებნება `AudioDB/<მარცვალი>.wav`.
 4. **შეერთება** pydub-ით: ნორმალიზაცია, 20 ჰც მაღალი ფილტრი, 5 მწ ფეიდები, 15 მწ კროსფეიდი, ფიქსირებული პაუზები, დაბალი დონის თეთრი ხმაური.

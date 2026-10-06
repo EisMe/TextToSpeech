@@ -1,3 +1,4 @@
+import os
 import re
 import logging
 
@@ -22,26 +23,78 @@ BACKGROUND_NOISE_GAIN_DB = -35
 HIGH_PASS_CUTOFF_HZ = 20
 FADE_MS = 5
 
+# Unknown abbreviations are appended here (one per line, "<abbr>\tUNKNOWN")
+# so they can be expanded by hand and then moved into Constants/abbreviations.py.
+UNKNOWN_ABBREV_FILE = "unknown_abbreviations.txt"
+
+GEORGIAN = "\u10D0-\u10FF"
+# Abbreviation-like tokens: dotted multi-part forms (e.g. "ე.ი.") and slash forms (e.g. "ს/ს").
+ABBREV_LIKE = re.compile(
+    rf"(?<![{GEORGIAN}.])(?:[{GEORGIAN}]{{1,5}}\.){{2,}}"
+    rf"|(?<![{GEORGIAN}/])[{GEORGIAN}]{{1,5}}/[{GEORGIAN}]{{1,5}}(?![{GEORGIAN}/])"
+)
+
 
 # === აბრევიატურების გაშლა ===
+def _whole_token(s):
+    """Regex matching `s` only when it is not part of a longer word.
+
+    Plain \\b fails for abbreviations ending in '.', because there is no word
+    boundary between '.' and a following space, so lookarounds are used.
+    """
+    return r'(?<![\w.])' + re.escape(s) + r'(?!\w)'
+
+
+def log_unknown_abbreviations(text, path=None):
+    """Append abbreviation-like tokens that were not expanded to the UNKNOWN list.
+
+    Returns the set of unknown tokens found in `text`.
+    """
+    found = {m.group(0) for m in ABBREV_LIKE.finditer(text)}
+    if not found:
+        return found
+    path = path or os.path.join(os.getcwd(), UNKNOWN_ABBREV_FILE)
+    try:
+        known = set()
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                known = {line.split("\t")[0] for line in f if line.strip()}
+        new = sorted(found - known)
+        if new:
+            with open(path, "a", encoding="utf-8") as f:
+                for abbr in new:
+                    f.write(f"{abbr}\tUNKNOWN\n")
+            logger.info("Unknown abbreviations logged to %s: %s", path, ", ".join(new))
+    except OSError:
+        logger.exception("Could not write unknown abbreviations to %s", path)
+    return found
+
+
 def expand_abbreviations(text):
     """Expands abbreviations in the text using the abbrevs dictionary.
 
-    Matches are anchored to word boundaries so an abbreviation can't be
-    substituted as a substring inside an unrelated longer word.
+    Abbreviation-like tokens that are not in the dictionary are logged as
+    UNKNOWN entries (see log_unknown_abbreviations) for manual expansion.
     """
-    for abbrev, expansion in abbrevs.items():
-        pattern = r'\b' + re.escape(abbrev) + r'\b'
-        text = re.sub(pattern, expansion, text)
+    # Longest first, so "ძვ.წ." is expanded before its suffix "წ.".
+    for abbrev in sorted(abbrevs, key=len, reverse=True):
+        text = re.sub(_whole_token(abbrev), abbrevs[abbrev], text)
+    log_unknown_abbreviations(text)
+    # Until an unknown dotted form is expanded by hand, drop its inner dots so
+    # they are not read as sentence ends ("ფ.ს.ქ." -> "ფსქ").
+    text = ABBREV_LIKE.sub(lambda m: m.group(0).replace(".", ""), text)
     return text
 
 
 # === აკრონიმების გაშლა ===
 def expand_acronyms(text):
-    """Expands acronyms in the text using the acr dictionary."""
-    for word in text.split():
-        if word in acr:
-            text = re.sub(rf'\b{re.escape(word)}\b', acr[word], text)
+    """Expands acronyms in the text using the acr dictionary.
+
+    Matches whole tokens, so an acronym followed by punctuation
+    (e.g. "თსუ.") is expanded too.
+    """
+    for acronym in sorted(acr, key=len, reverse=True):
+        text = re.sub(_whole_token(acronym), acr[acronym], text)
     return text
 
 
@@ -53,16 +106,26 @@ def expand_symbols(text):
 
 
 def remove_symbols_and_tags(text):
+    """Removes unwanted characters.
+
+    Deletes markup tags and the characters in symbols_to_remove, then every
+    character outside the Georgian alphabet except whitespace and the
+    punctuation used for pauses (. , ! ?).
+    """
     text = re.sub(r'(?<!\d)-\s*([a-zA-Z0-9]+)', r'\1', text)
     text = re.sub(r'(?<!\d)-', '', text)
-
-    text = re.sub(r'\s*([.,!?;:])\s*', r'\1 ', text)
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'<[^>]+>', '', text)
 
     if symbols_to_remove:
         char_class = "".join(re.escape(s) for s in symbols_to_remove)
         text = re.sub(f'[{char_class}]', '', text)
-    text = re.sub(r'<[^>]+>', '', text)
+
+    # Non-Georgian characters (Latin letters, digits left over, other scripts).
+    text = re.sub(rf'[^{GEORGIAN}\s.,!?]', ' ', text)
+
+    # Attach pause punctuation to the preceding word: "word , x" -> "word, x".
+    text = re.sub(r'\s*([.,!?]+)\s*', r'\1 ', text)
+    text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 
@@ -264,6 +327,7 @@ def unique_syllables(syllables):
 
 
 def normalize_text(text):
+    text = re.sub(r'<[^>]+>', ' ', text)  # markup tags, before '<'/'>' are expanded to words
     text = expand_symbols(text)
     text = expand_abbreviations(text)
     text = expand_acronyms(text)
@@ -281,20 +345,29 @@ def preprocess_and_syllabify(text):
     all_syllables = []
 
     for word in words:
-        has_eos = bool(re.search(r'[.!?]$', word))
+        # '.', '!', '?' end a sentence (<eos>, long pause); ',' gives a double
+        # pause (<s><s>); every other word is followed by a single <s>.
+        if re.search(r'[.!?]', word):
+            pause = ["<eos>"]
+        elif ',' in word:
+            pause = ["<s>", "<s>"]
+        else:
+            pause = ["<s>"]
 
-        word_clean = re.sub(r'[.,!?;:"„"–]', '', word)
+        word_clean = re.sub(r'[.,!?;:"„“–]', '', word)
 
         if not word_clean:
+            # Stray punctuation: strengthen the pause after the previous word.
+            if all_syllables and pause == ["<eos>"]:
+                while all_syllables and all_syllables[-1] == "<s>":
+                    all_syllables.pop()
+                all_syllables.append("<eos>")
+            elif all_syllables and pause == ["<s>", "<s>"]:
+                all_syllables.append("<s>")
             continue
 
-        sylls = syllabify_georgian(word_clean)
-        all_syllables.extend(sylls)
-
-        if has_eos:
-            all_syllables.append("<eos>")
-        else:
-            all_syllables.append("<s>")
+        all_syllables.extend(syllabify_georgian(word_clean))
+        all_syllables.extend(pause)
 
     return all_syllables
 
