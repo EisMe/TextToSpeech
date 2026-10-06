@@ -1,5 +1,5 @@
 PyQt6
 pydub
+audioop-lts; python_version >= "3.13"
 PyPDF2
 python-docx
-praat-parselmouth 
