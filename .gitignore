@@ -4,3 +4,5 @@ venv312/
 __pycache__/
 *.pyc
 my_temp/
+build/
+dist/
