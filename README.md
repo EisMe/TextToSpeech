@@ -16,8 +16,8 @@ A rule-based Georgian text-to-speech system. It splits normalized text into syll
 
 ## Current limitations
 
-- **Inventory:** `AudioDB/` has 121 recorded syllables. The corpus analysis in the paper identifies 241 syllables that cover about 80% of syllable tokens.
-- **Missing syllables:** if a syllable has no recording, generation stops and the GUI lists the missing syllables. There is no diphone fallback yet.
+- **Inventory:** `AudioDB/` has 121 recorded syllables. The corpus analysis in the paper identifies 247 syllables that cover about 80% of syllable tokens.
+- **Missing syllables:** a syllable with no recording is built from smaller units (see *How it works*). Generation stops, and the GUI lists the syllables, only if one of those units is missing too. The fallback needs recordings of the single consonants, which are not in `AudioDB/` yet.
 - **Prosody:** only fixed pauses and cross-fades. No pitch, duration or stress modelling.
 - **Normalization:** lookup-based; no context-dependent disambiguation of abbreviations or number case.
 - **Speaker:** one voice.
@@ -40,13 +40,13 @@ On Python 3.13, `pydub` also needs: `pip install audioop-lts`.
 python Interface.py
 ```
 
-Enter Georgian text or load a `.txt`, `.pdf` or `.docx` file (PDF and DOCX import need `PyPDF2` and `python-docx`), press generate, then play or save the audio. Generation only works if every syllable of the text is in `AudioDB/`.
+Enter Georgian text or load a `.txt`, `.pdf` or `.docx` file (PDF and DOCX import need `PyPDF2` and `python-docx`), press generate, then play or save the audio. Generation only works if every syllable of the text, or every unit it falls back to, is in `AudioDB/`.
 
 ## How it works
 
 1. **Normalize** the text (`Functions.py`: symbols → abbreviations → acronyms → numbers → removal of unwanted and non-Georgian characters).
 2. **Syllabify** each word with the rule set in `syllabify_georgian()`.
-3. **Look up** `AudioDB/<syllable>.wav` for every syllable.
+3. **Look up** `AudioDB/<syllable>.wav` for every syllable. If it is missing, the syllable is rebuilt from units: the last onset consonant with the vowel (a CV unit) plus each other consonant on its own, e.g. `წლებ` → `წ` + `ლე` + `ბ` (`resolve_syllable_audio()`). A missing CV unit is split again into consonant + vowel.
 4. **Concatenate** with pydub: normalize, 20 Hz high-pass, 5 ms fades, 15 ms cross-fade, fixed pauses, low-level white noise overlay.
 
 ## Repository layout
@@ -92,8 +92,8 @@ The speaker consented to the recordings being published under this license.
 
 ## ამჟამინდელი შეზღუდვები
 
-- **მარცვლების რაოდენობა:** `AudioDB/`-ში 121 ჩაწერილი მარცვალია. ნაშრომის კორპუსის ანალიზით 241 მარცვალი ფარავს მარცვლის გამოყენებათა დაახლოებით 80%-ს.
-- **ნაკლული მარცვლები:** თუ მარცვალი არ არის ჩაწერილი, გენერაცია ჩერდება და GUI აჩვენებს ნაკლულ მარცვლებს. დიფონური ალტერნატივა ჯერ არ არსებობს.
+- **მარცვლების რაოდენობა:** `AudioDB/`-ში 121 ჩაწერილი მარცვალია. ნაშრომის კორპუსის ანალიზით 247 მარცვალი ფარავს მარცვლის გამოყენებათა დაახლოებით 80%-ს.
+- **ნაკლული მარცვლები:** ჩაუწერელი მარცვალი იწყობა უფრო მცირე ერთეულებისგან: ბოლო თანხმოვანი ხმოვანთან ერთად (CV ერთეული) და დანარჩენი თანხმოვნები ცალ-ცალკე, მაგ. `წლებ` → `წ` + `ლე` + `ბ`. გენერაცია ჩერდება მხოლოდ მაშინ, თუ რომელიმე ერთეულიც აკლია. ამისთვის საჭიროა ცალკეული თანხმოვნების ჩანაწერები, რომლებიც `AudioDB/`-ში ჯერ არ არის.
 - **პროსოდია:** მხოლოდ ფიქსირებული პაუზები და კროსფეიდი. ტონის, ხანგრძლივობისა და მახვილის მოდელირება არ არის.
 - **ნორმალიზაცია:** სიებზე დაფუძნებულია; აბრევიატურებისა და რიცხვების ბრუნვა კონტექსტის მიხედვით არ განისაზღვრება.
 - **ხმა:** ერთი დიქტორი.
