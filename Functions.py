@@ -322,6 +322,47 @@ def syllabify_georgian(word):
     return syllables
 
 
+def fallback_units(syllable):
+    """Split a syllable into smaller recordable units (sub-syllable fallback).
+
+    A syllable is (onset consonants) + vowel + (coda consonants). It is rebuilt
+    from the last onset consonant joined with the vowel (a CV unit) plus each
+    remaining consonant on its own, e.g. "წლებ" -> ["წ", "ლე", "ბ"]. A syllable
+    without a vowel is split into its letters.
+    """
+    vowel_at = next((i for i, ch in enumerate(syllable) if ch in VOWELS), None)
+    if vowel_at is None:
+        return list(syllable)
+    onset, coda = syllable[:vowel_at], syllable[vowel_at + 1:]
+    core = onset[-1:] + syllable[vowel_at]
+    return list(onset[:-1]) + [core] + list(coda)
+
+
+def resolve_syllable_audio(syllable, db_path=None):
+    """Audio files for `syllable`: its own recording if there is one, otherwise
+    the recordings of its fallback units. A CV unit with no recording is
+    further split into consonant + vowel. Returns None if any piece is missing.
+    """
+    path = get_syllable_audio_path(syllable, db_path)
+    if path:
+        return [path]
+
+    paths = []
+    for unit in fallback_units(syllable):
+        unit_path = get_syllable_audio_path(unit, db_path)
+        if unit_path:
+            paths.append(unit_path)
+            continue
+        if len(unit) == 2:
+            pieces = [get_syllable_audio_path(ch, db_path) for ch in unit]
+            if all(pieces):
+                paths.extend(pieces)
+                continue
+        return None
+    logger.debug("Syllable %r built from fallback units %s", syllable, fallback_units(syllable))
+    return paths
+
+
 def unique_syllables(syllables):
     return set(syllables)
 
@@ -401,19 +442,20 @@ def synthesize_speech(syllables, db_path=None):
                 output = output + AudioSegment.silent(duration=SENTENCE_FINAL_SILENCE_MS)
             continue
 
-        path = get_syllable_audio_path(syl, db_path)
-        if not path:
+        paths = resolve_syllable_audio(syl, db_path)
+        if not paths:
             logger.warning("Missing syllable audio: %s", syl)
             if len(output) > 0:
                 output = output + AudioSegment.silent(duration=INTER_WORD_SILENCE_MS)
             continue
 
         try:
-            seg = prepare_segment(path)
-            if len(output) == 0:
-                output = seg
-            else:
-                output = simple_crossfade(output, seg)
+            for path in paths:
+                seg = prepare_segment(path)
+                if len(output) == 0:
+                    output = seg
+                else:
+                    output = simple_crossfade(output, seg)
         except Exception:
             logger.exception("Error processing syllable '%s'", syl)
             if len(output) > 0:

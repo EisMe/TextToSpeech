@@ -12,8 +12,8 @@ import sys
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from Functions import preprocess_and_syllabify, synthesize_speech
-from db import populate_syllable_db, get_syllable_audio_path
+from Functions import preprocess_and_syllabify, synthesize_speech, resolve_syllable_audio
+from db import populate_syllable_db
 
 from app_config import AUDIO_FORMAT
 from strings import STRINGS
@@ -43,7 +43,7 @@ class GenerationWorker(QThread):
 
             missing = {
                 syl for syl in syllables
-                if syl not in ("<s>", "<eos>") and not get_syllable_audio_path(syl)
+                if syl not in ("<s>", "<eos>") and not resolve_syllable_audio(syl)
             }
             if missing:
                 self.missing_syllables.emit(missing)
