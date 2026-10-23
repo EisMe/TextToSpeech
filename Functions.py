@@ -4,7 +4,7 @@ import logging
 
 from pydub import AudioSegment, effects
 from pydub.generators import WhiteNoise
-from pydub.silence import split_on_silence
+from pydub.silence import detect_nonsilent
 
 from utils import resource_path
 from db import get_syllable_audio_path, populate_syllable_db
@@ -99,9 +99,19 @@ def expand_acronyms(text):
 
 
 # === სიმბოლოების გაშლა ===
+# A hyphen is read as "minus" only as a sign directly before a number ("-5").
+# Elsewhere it joins a numeral or acronym to a Georgian ending ("2007-ში",
+# "თსუ-ს"), marks an ordinal ("მე-5", "5-ე", "1-ლი") or links a compound.
+MINUS_SIGN = re.compile(r'(?:^|(?<=[\s(=<>]))[-−](?=\d)', re.MULTILINE)
+
+
 def expand_symbols(text):
+    minus = symbols_to_expand.get("-")
+    if minus:
+        text = MINUS_SIGN.sub(f' {minus} ', text)
     for symbol, replacement in symbols_to_expand.items():
-        text = text.replace(symbol, f' {replacement} ')
+        if symbol != "-":
+            text = text.replace(symbol, f' {replacement} ')
     return text
 
 
@@ -129,14 +139,86 @@ def remove_symbols_and_tags(text):
     return text.strip()
 
 
+def ordinal_to_words(number):
+    """Ordinal numeral in the nominative: 5 -> "მეხუთე", 21 -> "ოცდამეერთე".
+
+    The prefix მე- and the suffix -ე go on the last element of the cardinal,
+    after "და" in compounds; 1 is the suppletive "პირველი".
+    """
+    if number == 1:
+        return "პირველი"
+    words = convert_numbers_to_words(number)
+    if not words or words.isdigit():
+        return words
+    head, space, last = words.rpartition(" ")
+    tens, da, unit = last.rpartition("და")
+    stem = unit[:-1] if unit.endswith(("ი", "ა")) else unit
+    return f"{head}{space}{tens}{da}მე{stem}ე"
+
+
+def attach_suffix(word, suffix):
+    """Join a Georgian ending written after a hyphen to a numeral in words.
+
+    "ხუთი" + "ში" -> "ხუთში", "რვა" + "ის" -> "რვის", "ხუთი" + "დან" ->
+    "ხუთიდან", "ხუთი" + "მდე" -> "ხუთამდე", "ორი" + "ვე" -> "ორივე".
+    """
+    if suffix.startswith("ვე"):
+        return word + suffix
+    if suffix.startswith("დან"):
+        stem = word[:-1] if word.endswith(("ი", "ა", "ე")) else word
+        return stem + "ი" + suffix
+    if suffix.startswith("მდე"):
+        return (word[:-1] + "ა" if word.endswith("ი") else word) + suffix
+    if word.endswith("ი") or (word.endswith(("ა", "ე")) and suffix.startswith("ი")):
+        return word[:-1] + suffix
+    return word + suffix
+
+
+# Roman numerals next to a Georgian word ("XIX საუკუნე", "ბაგრატ III") are read
+# as ordinals. Only I, V and X are accepted (up to XXXIX): enough for centuries
+# and regnal numbers, without catching Latin acronyms such as "CD".
+ROMAN_NUMERAL = re.compile(
+    rf"(?<![A-Za-z])(?=[IVX])(X{{0,3}}(?:IX|IV|V?I{{0,3}}))(?:-([{GEORGIAN}]+))?(?![A-Za-z])"
+)
+ROMAN_VALUES = {"I": 1, "V": 5, "X": 10}
+
+
+def roman_to_int(numeral):
+    values = [ROMAN_VALUES[ch] for ch in numeral]
+    return sum(-v if i + 1 < len(values) and v < values[i + 1] else v
+               for i, v in enumerate(values))
+
+
+def expand_roman_numerals(text):
+    def replace(match):
+        numeral, suffix = match.group(1), match.group(2)
+        before = match.string[max(0, match.start() - 2):match.start()]
+        after = match.string[match.end():match.end() + 2]
+        next_to_georgian = (
+            suffix
+            or re.search(rf"[{GEORGIAN}]\s?$", before)
+            or re.match(rf"\s?[{GEORGIAN}]", after)
+        )
+        if not next_to_georgian:
+            return match.group(0)
+        word = ordinal_to_words(roman_to_int(numeral))
+        return attach_suffix(word, suffix) if suffix else word
+
+    return ROMAN_NUMERAL.sub(replace, text)
+
+
 def expand_numbers(text):
-    def replace_ordinal_suffix(match):
-        number = int(match.group(1))
-        word = convert_numbers_to_words(number)
-        if word:
-            return word[:-1] + "ე"
-        else:
-            return str(number) + "-ე"
+    def replace_ordinal(match):
+        return ordinal_to_words(int(match.group(1)))
+
+    def replace_first(match):
+        # "1-ლი" -> "პირველი", "1-ლმა" -> "პირველმა"
+        if int(match.group(1)) == 1:
+            return "პირველ" + match.group(2)
+        return match.group(0)
+
+    def replace_with_suffix(match):
+        return attach_suffix(convert_numbers_to_words(int(match.group(1))), match.group(2))
 
     def replace_decimal(match):
         decimal = match.group(1)
@@ -157,7 +239,14 @@ def expand_numbers(text):
         return word if word else str(match.group())
 
     text = re.sub(r'(?<=\d),(?=\d{3}\b)', '', text)
-    text = re.sub(r'\b(\d+)-ე\b', lambda m: str(replace_ordinal_suffix(m)), text)
+    # Ordinals: "მე-5" and "5-ე" -> "მეხუთე", "1-ლი" -> "პირველი".
+    text = re.sub(rf'(?<![{GEORGIAN}])მე-(\d+)(?!\d)', replace_ordinal, text)
+    text = re.sub(rf'(?<!\d)(\d+)-ე(?![{GEORGIAN}])', replace_ordinal, text)
+    text = re.sub(rf'(?<!\d)(\d+)-ლ([{GEORGIAN}]*)', replace_first, text)
+    # Case endings after a hyphen: "2007-ში" -> "ორი ათას შვიდში".
+    text = re.sub(rf'(?<!\d)(\d+)-([{GEORGIAN}]+)', replace_with_suffix, text)
+    # Ranges: "1990-1995" is read as two numbers.
+    text = re.sub(r'(?<=\d)\s*-\s*(?=\d)', ' ', text)
     text = re.sub(r'\b(\d*\.\d+)([%\w\-]*)', lambda m: str(replace_decimal(m)), text)
     text = re.sub(r'\b\d+\b', lambda m: str(replace_plain_number(m)), text)
 
@@ -322,6 +411,47 @@ def syllabify_georgian(word):
     return syllables
 
 
+def fallback_units(syllable):
+    """Split a syllable into smaller recordable units (sub-syllable fallback).
+
+    A syllable is (onset consonants) + vowel + (coda consonants). It is rebuilt
+    from the last onset consonant joined with the vowel (a CV unit) plus each
+    remaining consonant on its own, e.g. "წლებ" -> ["წ", "ლე", "ბ"]. A syllable
+    without a vowel is split into its letters.
+    """
+    vowel_at = next((i for i, ch in enumerate(syllable) if ch in VOWELS), None)
+    if vowel_at is None:
+        return list(syllable)
+    onset, coda = syllable[:vowel_at], syllable[vowel_at + 1:]
+    core = onset[-1:] + syllable[vowel_at]
+    return list(onset[:-1]) + [core] + list(coda)
+
+
+def resolve_syllable_audio(syllable, db_path=None):
+    """Audio files for `syllable`: its own recording if there is one, otherwise
+    the recordings of its fallback units. A CV unit with no recording is
+    further split into consonant + vowel. Returns None if any piece is missing.
+    """
+    path = get_syllable_audio_path(syllable, db_path)
+    if path:
+        return [path]
+
+    paths = []
+    for unit in fallback_units(syllable):
+        unit_path = get_syllable_audio_path(unit, db_path)
+        if unit_path:
+            paths.append(unit_path)
+            continue
+        if len(unit) == 2:
+            pieces = [get_syllable_audio_path(ch, db_path) for ch in unit]
+            if all(pieces):
+                paths.extend(pieces)
+                continue
+        return None
+    logger.debug("Syllable %r built from fallback units %s", syllable, fallback_units(syllable))
+    return paths
+
+
 def unique_syllables(syllables):
     return set(syllables)
 
@@ -333,6 +463,7 @@ def normalize_text(text):
     text = expand_acronyms(text)
 
     text = re.sub(r'([a-zA-Z]+)-([a-zA-Z]+)', r'\1\2', text)
+    text = expand_roman_numerals(text)
     text = expand_numbers(text)
     text = remove_symbols_and_tags(text)
 
@@ -372,6 +503,21 @@ def preprocess_and_syllabify(text):
     return all_syllables
 
 
+def trim_silence(seg):
+    """Cut leading and trailing silence, keeping any silence inside the unit.
+
+    Stop closures and the lag after an ejective burst are silent as well, so
+    keeping only the first non-silent chunk would reduce syllables such as
+    "კავ" or "წამ" to their burst.
+    """
+    ranges = detect_nonsilent(
+        seg, min_silence_len=SILENCE_MIN_LEN_MS, silence_thresh=SILENCE_THRESH_DB
+    )
+    if not ranges:
+        return seg
+    return seg[ranges[0][0]:ranges[-1][1]]
+
+
 def synthesize_speech(syllables, db_path=None):
     if db_path is None:
         db_path = resource_path("tts_syllables.db")
@@ -382,11 +528,7 @@ def synthesize_speech(syllables, db_path=None):
     def prepare_segment(path):
         seg = AudioSegment.from_wav(path)
         seg = effects.normalize(seg).high_pass_filter(HIGH_PASS_CUTOFF_HZ)
-        chunks = split_on_silence(
-            seg, min_silence_len=SILENCE_MIN_LEN_MS,
-            silence_thresh=SILENCE_THRESH_DB, keep_silence=0
-        )
-        seg = chunks[0] if chunks else seg
+        seg = trim_silence(seg)
         return seg.fade_in(FADE_MS).fade_out(FADE_MS)
 
     output = AudioSegment.empty()
@@ -401,19 +543,20 @@ def synthesize_speech(syllables, db_path=None):
                 output = output + AudioSegment.silent(duration=SENTENCE_FINAL_SILENCE_MS)
             continue
 
-        path = get_syllable_audio_path(syl, db_path)
-        if not path:
+        paths = resolve_syllable_audio(syl, db_path)
+        if not paths:
             logger.warning("Missing syllable audio: %s", syl)
             if len(output) > 0:
                 output = output + AudioSegment.silent(duration=INTER_WORD_SILENCE_MS)
             continue
 
         try:
-            seg = prepare_segment(path)
-            if len(output) == 0:
-                output = seg
-            else:
-                output = simple_crossfade(output, seg)
+            for path in paths:
+                seg = prepare_segment(path)
+                if len(output) == 0:
+                    output = seg
+                else:
+                    output = simple_crossfade(output, seg)
         except Exception:
             logger.exception("Error processing syllable '%s'", syl)
             if len(output) > 0:
