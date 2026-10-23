@@ -44,10 +44,10 @@ Enter Georgian text or load a `.txt`, `.pdf` or `.docx` file (PDF and DOCX impor
 
 ## How it works
 
-1. **Normalize** the text (`Functions.py`: symbols → abbreviations → acronyms → numbers → removal of unwanted and non-Georgian characters).
+1. **Normalize** the text (`Functions.py`: symbols → abbreviations → acronyms → Roman and Arabic numerals, including ordinals such as `მე-5` and endings such as `2007-ში` → removal of unwanted and non-Georgian characters). A hyphen is read as "minus" only as a sign before a number.
 2. **Syllabify** each word with the rule set in `syllabify_georgian()`.
 3. **Look up** `AudioDB/<syllable>.wav` for every syllable. If it is missing, the syllable is rebuilt from units: the last onset consonant with the vowel (a CV unit) plus each other consonant on its own, e.g. `წლებ` → `წ` + `ლე` + `ბ` (`resolve_syllable_audio()`). A missing CV unit is split again into consonant + vowel.
-4. **Concatenate** with pydub: normalize, 20 Hz high-pass, 5 ms fades, 15 ms cross-fade, fixed pauses, low-level white noise overlay.
+4. **Concatenate** with pydub: normalize, 20 Hz high-pass, trim leading and trailing silence, 5 ms fades, 15 ms cross-fade, fixed pauses, low-level white noise overlay.
 
 ## Repository layout
 
@@ -120,10 +120,10 @@ python Interface.py
 
 ## როგორ მუშაობს
 
-1. **ნორმალიზაცია** (`Functions.py`): სიმბოლოები → აბრევიატურები → აკრონიმები → რიცხვები → არასასურველი და არაქართული სიმბოლოების წაშლა.
+1. **ნორმალიზაცია** (`Functions.py`): სიმბოლოები → აბრევიატურები → აკრონიმები → რომაული და არაბული რიცხვები (რიგობითი ფორმების, მაგ. `მე-5`, და დაბოლოებების, მაგ. `2007-ში`, ჩათვლით) → არასასურველი და არაქართული სიმბოლოების წაშლა. დეფისი „მინუსად“ იკითხება მხოლოდ რიცხვის წინ, როგორც ნიშანი.
 2. **მარცვლებად დაყოფა** `syllabify_georgian()` ფუნქციის წესებით.
 3. **ძიება:** თითოეული მარცვლისთვის იძებნება `AudioDB/<მარცვალი>.wav`.
-4. **შეერთება** pydub-ით: ნორმალიზაცია, 20 ჰც მაღალი ფილტრი, 5 მწ ფეიდები, 15 მწ კროსფეიდი, ფიქსირებული პაუზები, დაბალი დონის თეთრი ხმაური.
+4. **შეერთება** pydub-ით: ნორმალიზაცია, 20 ჰც მაღალი ფილტრი, დასაწყისსა და ბოლოში სიჩუმის მოჭრა, 5 მწ ფეიდები, 15 მწ კროსფეიდი, ფიქსირებული პაუზები, დაბალი დონის თეთრი ხმაური.
 
 ## ლიცენზია
 
